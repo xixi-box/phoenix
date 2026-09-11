@@ -1,27 +1,12 @@
 """REST evaluator lifecycle and cross-API compatibility tests."""
 
-from collections.abc import Iterator
 from secrets import token_hex
 from typing import Any
 
 import httpx
-import pytest
 
 from .._helpers import _AppInfo, _gql, _httpx_client
 from ._helpers import _llm_body, _mapping
-from ._helpers import client as client
-from ._helpers import sandbox_id as sandbox_id
-
-
-@pytest.fixture
-def project(client: httpx.Client) -> Iterator[dict[str, Any]]:
-    response = client.post("v1/projects", json={"name": f"eval-{token_hex(8)}"})
-    response.raise_for_status()
-    project = response.json()["data"]
-    try:
-        yield project
-    finally:
-        client.delete(f"v1/projects/{project['id']}")
 
 
 def _create_code(
@@ -213,13 +198,13 @@ def test_llm_creation_patch_and_prompt_retention(
     response = client.patch(evaluator, json={"type": "llm", "prompt_version": prompt})
     assert response.status_code == 200, response.text
     updated = response.json()["data"]
-    assert updated["prompt_version_id"] != definition["prompt_version_id"]
+    assert updated["prompt_version"]["id"] != definition["prompt_version"]["id"]
     response = client.patch(evaluator, json={"type": "llm", "description": "new description"})
     assert response.status_code == 422, response.text
     assert client.get(evaluator).json()["data"]["description"] == "correctness"
     response = client.patch(evaluator, json={"type": "llm", "name": f"renamed-{token_hex(8)}"})
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["prompt_version_id"] == updated["prompt_version_id"]
+    assert response.json()["data"]["prompt_version"]["id"] == updated["prompt_version"]["id"]
     result, _ = _gql(
         _app,
         _app.admin_secret,
@@ -228,16 +213,16 @@ def test_llm_creation_patch_and_prompt_retention(
     """,
         variables={"id": binding["evaluator_id"]},
     )
-    assert result["data"]["node"]["promptVersion"]["id"] == updated["prompt_version_id"]
+    assert result["data"]["node"]["promptVersion"]["id"] == updated["prompt_version"]["id"]
     assert client.delete(item, params={"delete_associated_prompt": "false"}).status_code == 204
     assert client.get(evaluator).status_code == 404
     result, _ = _gql(
         _app,
         _app.admin_secret,
         query="query($id: ID!) { node(id: $id) { id } }",
-        variables={"id": updated["prompt_version_id"]},
+        variables={"id": updated["prompt_version"]["id"]},
     )
-    assert result["data"]["node"]["id"] == updated["prompt_version_id"]
+    assert result["data"]["node"]["id"] == updated["prompt_version"]["id"]
 
 
 def test_session_evaluation_delay_bounds(
