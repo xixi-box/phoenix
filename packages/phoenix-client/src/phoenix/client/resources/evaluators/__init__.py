@@ -22,7 +22,11 @@ from phoenix.client.utils.server_requirements import (
 
 logger = logging.getLogger(__name__)
 
-EvaluatorDefinition = Union[v1.LLMEvaluatorDefinition, v1.CodeEvaluatorDefinition]
+EvaluatorDefinition = Union[
+    v1.LLMEvaluatorDefinition,
+    v1.CodeEvaluatorDefinition,
+    v1.BuiltInEvaluatorDefinition,
+]
 """A shared evaluator definition. The ``type`` field discriminates the variants."""
 
 EvaluatorOutputConfig = Union[
@@ -131,8 +135,8 @@ class Evaluators:
             evaluator_id (str): The ID of the evaluator.
 
         Returns:
-            The LLM or code evaluator definition. Inspect ``type`` to tell them
-            apart.
+            The LLM, code, or built-in evaluator definition. Inspect ``type`` to
+            tell them apart.
 
         Raises:
             httpx.HTTPError: If the request fails.
@@ -354,8 +358,8 @@ class AsyncEvaluators:
             evaluator_id (str): The ID of the evaluator.
 
         Returns:
-            The LLM or code evaluator definition. Inspect ``type`` to tell them
-            apart.
+            The LLM, code, or built-in evaluator definition. Inspect ``type`` to
+            tell them apart.
 
         Raises:
             httpx.HTTPError: If the request fails.
