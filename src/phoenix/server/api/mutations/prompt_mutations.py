@@ -12,6 +12,7 @@ from strawberry.relay.types import GlobalID
 from strawberry.types import Info
 
 from phoenix.db import models
+from phoenix.db.helpers import upsert_prompt_version_tag
 from phoenix.db.types.identifier import Identifier
 from phoenix.db.types.model_provider import is_sdk_compatible_with_model_provider
 from phoenix.db.types.prompts import normalize_invocation_parameters_for_write
@@ -23,7 +24,6 @@ from phoenix.server.api.input_types.PromptVersionInput import (
 )
 from phoenix.server.api.mutations.prompt_version_tag_mutations import (
     CreatePromptVersionTagInput,
-    upsert_prompt_version_tag,
 )
 from phoenix.server.api.queries import Query
 from phoenix.server.api.types.node import from_global_id_with_expected_type

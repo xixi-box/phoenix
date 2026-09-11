@@ -35,6 +35,7 @@ from phoenix.config import (
 )
 from phoenix.db import models
 from phoenix.db.eval_work import LIVE_EVAL_WORK_STATUSES, SESSION_CONTENT_INCOMPLETE_ERROR
+from phoenix.db.types.identifier import Identifier
 
 SupportedSQLDialectName = Literal["postgresql", "sqlite"]
 
@@ -1468,3 +1469,36 @@ def pg_total_table_size_stmt() -> TextClause:
     return text(
         f"SELECT coalesce(sum(pg_total_relation_size(c.oid)), 0)\n{_PG_TABLES_IN_PHOENIX_SCHEMA}"
     ).bindparams(nspname=get_env_database_schema())
+
+
+async def upsert_prompt_version_tag(
+    session: AsyncSession,
+    prompt_id: int,
+    prompt_version_id: int,
+    name: Identifier,
+    description: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> models.PromptVersionTag:
+    """Create or retarget a tag within the caller's transaction."""
+    existing_tag = await session.scalar(
+        select(models.PromptVersionTag).where(
+            models.PromptVersionTag.prompt_id == prompt_id,
+            models.PromptVersionTag.name == name,
+        )
+    )
+
+    if existing_tag:
+        existing_tag.prompt_version_id = prompt_version_id
+        if description is not None:
+            existing_tag.description = description
+        return existing_tag
+    else:
+        new_tag = models.PromptVersionTag(
+            name=name,
+            description=description,
+            prompt_id=prompt_id,
+            prompt_version_id=prompt_version_id,
+            user_id=user_id,
+        )
+        session.add(new_tag)
+        return new_tag
