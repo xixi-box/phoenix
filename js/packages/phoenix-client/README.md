@@ -779,6 +779,47 @@ await setProjectRetentionPolicy({
 
 This helper only changes a project's assignment to an existing policy. Creating, reading, updating, and deleting retention policies is outside the scope of the TypeScript projects helper.
 
+## Evaluators
+
+The `@arizeai/phoenix-client` package provides an `evaluators` export for working with shared evaluator definitions. A definition is shared by every project and dataset that binds it, so an update applies everywhere it is used. These helpers require Phoenix server `21.0.0` or newer.
+
+### Reading and Updating a Definition
+
+```ts
+import {
+  getEvaluator,
+  updateEvaluator,
+} from "@arizeai/phoenix-client/evaluators";
+
+const evaluator = await getEvaluator({ evaluatorId: "RXZhbHVhdG9yOjE=" });
+console.log(evaluator.type, evaluator.name);
+
+await updateEvaluator({
+  evaluatorId: "RXZhbHVhdG9yOjE=",
+  patch: {
+    type: "llm",
+    description: "Flags responses that contradict the context",
+  },
+});
+```
+
+The `patch` is discriminated by `type` (`"llm"` or `"code"`) and must match the evaluator. Omitted fields keep their current values.
+
+### Appending Code
+
+Code is immutable per version. Use `createEvaluatorVersion` to append new source to a code evaluator; if the source matches the current version, `was_created` is `false`.
+
+```ts
+import { readFile } from "node:fs/promises";
+import { createEvaluatorVersion } from "@arizeai/phoenix-client/evaluators";
+
+const version = await createEvaluatorVersion({
+  evaluatorId: "RXZhbHVhdG9yOjI=",
+  sourceCode: await readFile("evaluator.py", "utf8"),
+});
+console.log(version.evaluator_version_id, version.was_created);
+```
+
 ## Examples
 
 To run examples, install dependencies using `pnpm` and run:

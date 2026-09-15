@@ -513,6 +513,37 @@ new_project = client.projects.create(
 print(f"Created project with ID: {new_project['id']}")
 ```
 
+### Evaluators
+
+Read and edit shared evaluator definitions. A definition is shared by every project and dataset that binds it, so an update applies everywhere it is used:
+
+```python
+from phoenix.client import Client
+from phoenix.client.types import PromptVersion
+
+client = Client()
+
+# Read a definition; `type` is "llm" or "code"
+definition = client.evaluators.get(evaluator_id="RXZhbHVhdG9yOjE=")
+print(definition["type"], definition["name"])
+
+# Give an LLM evaluator a new prompt version
+client.evaluators.update_llm(
+    evaluator_id="RXZhbHVhdG9yOjE=",
+    prompt_version=PromptVersion(
+        [{"role": "user", "content": "Is this response toxic? {{output}}"}],
+        model_name="gpt-4o",
+    ),
+)
+
+# Append a new immutable version of a code evaluator's source
+version = client.evaluators.create_version(
+    evaluator_id="RXZhbHVhdG9yOjI=",
+    source_code=open("evaluator.py").read(),
+)
+print(version["evaluator_version_id"], version["was_created"])
+```
+
 ## Documentation
 
 - **[Full Documentation](https://arize-phoenix.readthedocs.io/projects/client/en/latest/index.html)** - Complete API reference and guides
