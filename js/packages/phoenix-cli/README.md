@@ -500,6 +500,60 @@ px prompt get my-evaluator --tag production --format json | jq '.template'
 
 ---
 
+### `px evaluator get <evaluator-id>`
+
+Show a shared evaluator definition. Output is a single record; `type` is `llm` or `code`. Requires Phoenix server >= 21.0.0.
+
+```bash
+px evaluator get RXZhbHVhdG9yOjE=
+px evaluator get RXZhbHVhdG9yOjI= --format raw --no-progress | jq -r '.source_code'
+```
+
+---
+
+### `px evaluator update <evaluator-id>`
+
+Update a shared evaluator definition. The change applies to every project and dataset that uses the evaluator. Only the flags you pass are sent; omitted fields keep their values.
+
+```bash
+px evaluator update RXZhbHVhdG9yOjE= --type llm --name toxicity --description "Flags toxic responses"
+px prompt get toxicity --format raw --no-progress > prompt.json
+px evaluator update RXZhbHVhdG9yOjE= --type llm --prompt-version-file prompt.json
+px evaluator update RXZhbHVhdG9yOjI= --type code --input-mapping '{"literal_mapping":{},"path_mapping":{"output":"output"}}'
+```
+
+| Option                         | Description                                                                  | Default  |
+| ------------------------------ | ---------------------------------------------------------------------------- | -------- |
+| `--type <llm\|code>`           | Kind of evaluator (required, must match the server)                          | —        |
+| `--name <name>`                | New name                                                                     | —        |
+| `--description <text>`         | New description                                                              | —        |
+| `--output-configs <json>`      | JSON array of output configs (LLM evaluators: categorical only)              | —        |
+| `--prompt-version-id <id>`     | (llm) Use an existing prompt version                                         | —        |
+| `--prompt-version <json>`      | (llm) Inline prompt version JSON, as printed by `px prompt get --format raw` | —        |
+| `--prompt-version-file <path>` | (llm) Read the prompt version JSON from a file                               | —        |
+| `--sandbox-config-id <id>`     | (code) Sandbox configuration to run in                                       | —        |
+| `--input-mapping <json>`       | (code) JSON object with `literal_mapping` and `path_mapping`                 | —        |
+| `--format <format>`            | `pretty`, `json`, or `raw`                                                   | `pretty` |
+
+---
+
+### `px evaluator version create <evaluator-id>`
+
+Append a new immutable version of a code evaluator's source. If the source matches the current version, the existing version is returned and `was_created` is `false`.
+
+```bash
+px evaluator version create RXZhbHVhdG9yOjI= --file evaluator.py
+px evaluator version create RXZhbHVhdG9yOjI= --file evaluator.py --format raw --no-progress | jq -r '.evaluator_version_id'
+```
+
+| Option                 | Description                 | Default  |
+| ---------------------- | --------------------------- | -------- |
+| `--file <path>`        | Read the source from a file | —        |
+| `--source-code <text>` | Pass the source inline      | —        |
+| `--format <format>`    | `pretty`, `json`, or `raw`  | `pretty` |
+
+---
+
 ### `px project list`
 
 List all available Phoenix projects.

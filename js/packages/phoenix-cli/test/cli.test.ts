@@ -156,6 +156,18 @@ describe("Phoenix CLI", () => {
     ).toBeUndefined();
   });
 
+  it("should register get, update, and version under evaluator", () => {
+    const program = createProgram();
+    const evaluatorCommand = program.commands.find(
+      (command) => command.name() === "evaluator"
+    );
+
+    expect(evaluatorCommand).toBeDefined();
+    expect(evaluatorCommand?.commands.map((command) => command.name())).toEqual(
+      expect.arrayContaining(["get", "update", "version"])
+    );
+  });
+
   it("should register delete subcommand for dataset", () => {
     const program = createProgram();
     const datasetCommand = program.commands.find(
