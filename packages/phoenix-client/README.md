@@ -544,6 +544,49 @@ version = client.evaluators.create_version(
 print(version["evaluator_version_id"], version["was_created"])
 ```
 
+Bind evaluators to datasets. A binding registers the evaluator to run against the dataset's experiments and carries its own name and input mapping; it does not run an experiment by itself:
+
+```python
+# Bind an existing evaluator to a dataset by name or ID
+binding = client.evaluators.dataset_evaluators.create(
+    dataset="golden-questions",
+    name="exact-match",
+    evaluator_id="RXZhbHVhdG9yOjI=",
+    input_mapping={"literal_mapping": {}, "path_mapping": {"output": "output"}},
+)
+
+# Or create a new LLM evaluator and bind it in one step
+binding = client.evaluators.dataset_evaluators.create(
+    dataset="golden-questions",
+    name="toxicity",
+    input_mapping={"literal_mapping": {}, "path_mapping": {"output": "output"}},
+    evaluator={
+        "type": "llm",
+        "prompt_version": PromptVersion(
+            [{"role": "user", "content": "Is this response toxic? {{output}}"}],
+            model_name="gpt-4o",
+        )._dumps(),
+        "output_configs": [
+            {
+                "type": "CATEGORICAL",
+                "name": "toxicity",
+                "optimization_direction": "MINIMIZE",
+                "values": [{"label": "toxic", "score": 1}, {"label": "clean", "score": 0}],
+            }
+        ],
+    },
+)
+
+for item in client.evaluators.dataset_evaluators.list(dataset="golden-questions"):
+    print(item["dataset_evaluator_id"], item["name"], item["evaluator_kind"])
+
+client.evaluators.dataset_evaluators.update(
+    dataset_evaluator_id=binding["dataset_evaluator_id"],
+    description="Runs against the nightly golden set",
+)
+client.evaluators.dataset_evaluators.delete(dataset_evaluator_id=binding["dataset_evaluator_id"])
+```
+
 ## Documentation
 
 - **[Full Documentation](https://arize-phoenix.readthedocs.io/projects/client/en/latest/index.html)** - Complete API reference and guides

@@ -12,6 +12,11 @@ from phoenix.client.constants.server_requirements import (
     GET_EVALUATOR,
     PATCH_EVALUATOR,
 )
+from phoenix.client.resources.evaluators.dataset_evaluators import (
+    AsyncDatasetEvaluators,
+    DatasetEvaluators,
+)
+from phoenix.client.types.evaluators import EvaluatorDefinition, EvaluatorOutputConfig
 from phoenix.client.types.prompts import PromptVersion
 from phoenix.client.types.sentinels import NOT_GIVEN, NotGiven
 from phoenix.client.utils.encode_path_param import encode_path_param
@@ -21,20 +26,6 @@ from phoenix.client.utils.server_requirements import (
 )
 
 logger = logging.getLogger(__name__)
-
-EvaluatorDefinition = Union[
-    v1.LLMEvaluatorDefinition,
-    v1.CodeEvaluatorDefinition,
-    v1.BuiltInEvaluatorDefinition,
-]
-"""A shared evaluator definition. The ``type`` field discriminates the variants."""
-
-EvaluatorOutputConfig = Union[
-    v1.CategoricalAnnotationConfigData,
-    v1.ContinuousOutputConfig,
-    v1.FreeformOutputConfig,
-]
-"""An output configuration accepted by code evaluators."""
 
 
 def _build_llm_patch(
@@ -112,6 +103,14 @@ class Evaluators:
                 source_code="def evaluate(output: str) -> float:\\n    return 1.0\\n",
             )
             print(version["was_created"])
+
+            # Bind an evaluator to a dataset
+            client.evaluators.dataset_evaluators.create(
+                dataset="golden-questions",
+                name="exact-match",
+                evaluator_id="RXZhbHVhdG9yOjI=",
+                input_mapping={"literal_mapping": {}, "path_mapping": {"output": "output"}},
+            )
     """
 
     def __init__(
@@ -127,6 +126,16 @@ class Evaluators:
         """
         self._client = client
         self._guard = _guard or ServerVersionGuard(client)
+        self._dataset_evaluators = DatasetEvaluators(client, _guard=self._guard)
+
+    @property
+    def dataset_evaluators(self) -> DatasetEvaluators:
+        """Bindings between datasets and evaluators.
+
+        Returns:
+            DatasetEvaluators: The dataset evaluator bindings client.
+        """
+        return self._dataset_evaluators
 
     def get(self, *, evaluator_id: str) -> EvaluatorDefinition:
         """Get a shared evaluator definition by ID.
@@ -350,6 +359,16 @@ class AsyncEvaluators:
         """
         self._client = client
         self._guard = _guard or AsyncServerVersionGuard(client)
+        self._dataset_evaluators = AsyncDatasetEvaluators(client, _guard=self._guard)
+
+    @property
+    def dataset_evaluators(self) -> AsyncDatasetEvaluators:
+        """Bindings between datasets and evaluators.
+
+        Returns:
+            AsyncDatasetEvaluators: The dataset evaluator bindings client.
+        """
+        return self._dataset_evaluators
 
     async def get(self, *, evaluator_id: str) -> EvaluatorDefinition:
         """Get a shared evaluator definition by ID.

@@ -820,6 +820,68 @@ const version = await createEvaluatorVersion({
 console.log(version.evaluator_version_id, version.was_created);
 ```
 
+### Binding Evaluators to Datasets
+
+A dataset binding registers an evaluator to run against the dataset's experiments. It carries its own name and input mapping and may override the definition's description and output configurations. Creating a binding does not run an experiment.
+
+```ts
+import {
+  createDatasetEvaluator,
+  deleteDatasetEvaluator,
+  getDatasetEvaluators,
+  updateDatasetEvaluator,
+} from "@arizeai/phoenix-client/evaluators";
+
+// Bind an existing evaluator; the dataset can be selected by name or ID
+const binding = await createDatasetEvaluator({
+  dataset: { datasetName: "golden-questions" },
+  name: "exact-match",
+  inputMapping: { literal_mapping: {}, path_mapping: { output: "output" } },
+  evaluator: { type: "reference", evaluator_id: "RXZhbHVhdG9yOjI=" },
+});
+
+// Or create a new LLM evaluator and bind it in one step
+await createDatasetEvaluator({
+  dataset: { datasetName: "golden-questions" },
+  name: "toxicity",
+  inputMapping: { literal_mapping: {}, path_mapping: { output: "output" } },
+  evaluator: {
+    type: "llm",
+    prompt_version: promptVersion({
+      modelProvider: "OPENAI",
+      modelName: "gpt-4o",
+      template: [
+        { role: "user", content: "Is this response toxic? {{output}}" },
+      ],
+    }),
+    output_configs: [
+      {
+        type: "CATEGORICAL",
+        name: "toxicity",
+        optimization_direction: "MINIMIZE",
+        values: [
+          { label: "toxic", score: 1 },
+          { label: "clean", score: 0 },
+        ],
+      },
+    ],
+  },
+});
+
+const bindings = await getDatasetEvaluators({
+  dataset: { datasetName: "golden-questions" },
+});
+
+await updateDatasetEvaluator({
+  datasetEvaluatorId: binding.dataset_evaluator_id,
+  patch: { description: "Runs against the nightly golden set" },
+});
+
+await deleteDatasetEvaluator({
+  datasetEvaluatorId: binding.dataset_evaluator_id,
+});
+```
+
 ## Examples
 
 To run examples, install dependencies using `pnpm` and run:

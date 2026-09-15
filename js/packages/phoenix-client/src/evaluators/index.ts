@@ -1,4 +1,9 @@
 export * from "./getEvaluator";
 export * from "./updateEvaluator";
 export * from "./createEvaluatorVersion";
-export type * from "../types/evaluators";
+export * from "./createDatasetEvaluator";
+export * from "./getDatasetEvaluators";
+export * from "./getDatasetEvaluator";
+export * from "./updateDatasetEvaluator";
+export * from "./deleteDatasetEvaluators";
+export * from "../types/evaluators";
