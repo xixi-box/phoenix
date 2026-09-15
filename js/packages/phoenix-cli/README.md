@@ -664,6 +664,81 @@ Miss-case stderr (raw): `{"error":"Project 'foo' not found","code":"FAILURE","hi
 
 ---
 
+### `px project evaluator list <project-identifier>`
+
+List the evaluators bound to a project. Requires Phoenix server >= 21.0.0.
+
+```bash
+px project evaluator list support-bot
+px project evaluator list support-bot --format raw --no-progress | jq -r '.[] | select(.enabled) | .project_evaluator_id'
+```
+
+---
+
+### `px project evaluator get <project-evaluator-id>`
+
+Show a single binding. Output is a single record.
+
+```bash
+px project evaluator get UHJvamVjdEV2YWx1YXRvcjox --format json
+```
+
+---
+
+### `px project evaluator create <project-identifier>`
+
+Bind an evaluator to a project so it runs on incoming traces, creating the evaluator if needed. `SPAN` evaluators run on matching sampled spans. `TRACE` and `SESSION` evaluators run once per trace or session, after the first quiet period following the evaluation delay. Exactly one of `--evaluator-id`, `--evaluator`, or `--evaluator-file` selects the evaluator.
+
+```bash
+px project evaluator create support-bot --name toxicity --evaluation-target SPAN --sampling-rate 0.25 --evaluator-id RXZhbHVhdG9yOjE= --filter-condition "span_kind == 'LLM'"
+px project evaluator create support-bot --name resolution --evaluation-target SESSION --sampling-rate 1 --evaluator-file resolution.json --evaluation-delay-seconds 600
+```
+
+| Option                           | Description                                                       | Default  |
+| -------------------------------- | ----------------------------------------------------------------- | -------- |
+| `--name <name>`                  | Binding name, unique within the project (required)                | —        |
+| `--evaluation-target <target>`   | `SPAN`, `TRACE`, or `SESSION` (required)                          | —        |
+| `--sampling-rate <number>`       | Fraction of matching records to evaluate, 0 to 1 (required)       | —        |
+| `--evaluator-id <id>`            | Bind an existing code evaluator                                   | —        |
+| `--evaluator <json>`             | Inline JSON for a new evaluator with `type` of `llm` or `code`    | —        |
+| `--evaluator-file <path>`        | Read the new evaluator JSON from a file                           | —        |
+| `--filter-condition <expr>`      | Span filter expression records must match                         | —        |
+| `--disabled`                     | Create the binding paused                                         | —        |
+| `--input-mapping <json>`         | JSON object with `literal_mapping` and `path_mapping`             | —        |
+| `--evaluation-delay-seconds <n>` | For `TRACE` and `SESSION` targets, quiet period before evaluation | server   |
+| `--format <format>`              | `pretty`, `json`, or `raw`                                        | `pretty` |
+
+---
+
+### `px project evaluator update <project-evaluator-id>`
+
+Update a binding. Only the flags you pass are sent; omitted fields keep their values.
+
+```bash
+px project evaluator update UHJvamVjdEV2YWx1YXRvcjox --disabled
+px project evaluator update UHJvamVjdEV2YWx1YXRvcjox --sampling-rate 0.5 --filter-condition "span_kind == 'LLM'"
+```
+
+Accepts `--name`, `--sampling-rate`, `--filter-condition`, `--enabled` / `--disabled`, `--input-mapping`, and `--evaluation-delay-seconds`.
+
+---
+
+### `px project evaluator delete <project-evaluator-id...>`
+
+Delete one or more bindings and their evaluator traces. The shared definition is kept while any other project or dataset still references it. Requires `PHOENIX_CLI_DANGEROUSLY_ENABLE_DELETES=true`.
+
+```bash
+px project evaluator delete UHJvamVjdEV2YWx1YXRvcjox --yes
+px project evaluator delete UHJvamVjdEV2YWx1YXRvcjox UHJvamVjdEV2YWx1YXRvcjoy --keep-prompt --yes
+```
+
+| Option          | Description                                                   | Default |
+| --------------- | ------------------------------------------------------------- | ------- |
+| `--keep-prompt` | Keep the prompt of an LLM evaluator that becomes unreferenced | —       |
+| `-y, --yes`     | Skip the confirmation prompt                                  | —       |
+
+---
+
 ### `px session list`
 
 List sessions for a project.
