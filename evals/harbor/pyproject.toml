@@ -6,7 +6,7 @@ name = "phoenix-harbor-bench"
 version = "0.0.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-  "harbor==0.22.0",
+  "harbor[daytona]==0.22.0",
   "arize-phoenix-client[harbor]>=3.5.0",
   "datasets>=4.0",
 ]

@@ -1,0 +1,66 @@
+# Every condition on the dev split, one Harbor job. CI runs the file as written; ad hoc
+# runs go through `make harbor-bench`, which keeps only the AGENTS you name (Harbor's own
+# -a flag would drop the MCP servers, env, and skills that define a condition).
+#
+# Each condition is a stock Harbor agent under a condition name: Harbor keeps `name` as
+# a label when it is not a registered agent and `import_path` names the class. All of
+# them run the same image, built from evals/harbor/environment by `make harbor-stage`.
+#
+# Network: the tasks allow nothing by themselves. The environment grants the Phoenix docs
+# hosts to every trial (PXI's docs tool and `px docs`); each agent grants its own LLM
+# provider for its run phase. Add the results Phoenix host here when exporting PXI traces.
+jobs_dir: evals/harbor/.jobs
+n_concurrent_trials: 2
+datasets:
+  - path: evals/harbor/tasks/dev
+environment:
+  extra_allowed_hosts: [arizeai-433a7140.mintlify.app, arize.com]
+agents:
+  # Claude Code with the Phoenix MCP server. px is not on its PATH.
+  - name: claude-mcp
+    import_path: harbor.agents.installed.claude_code:ClaudeCode
+    model_name: anthropic/claude-opus-5
+    extra_allowed_hosts: [api.anthropic.com]
+    kwargs: {reasoning_effort: high, disallowed_tools: "WebSearch,WebFetch"}
+    mcp_servers:
+      - {name: phoenix, transport: streamable-http, url: "http://127.0.0.1:6006/mcp"}
+  # Claude Code with px on its PATH and the public phoenix-cli skill, no MCP server.
+  - name: claude-cli
+    import_path: harbor.agents.installed.claude_code:ClaudeCode
+    model_name: anthropic/claude-opus-5
+    extra_allowed_hosts: [api.anthropic.com]
+    kwargs: {reasoning_effort: high, disallowed_tools: "WebSearch,WebFetch"}
+    env:
+      PHOENIX_ENDPOINT: "http://127.0.0.1:6006"
+      NO_COLOR: "1"
+      PATH: "/opt/px/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    skills: [.agents/skills/phoenix-cli]
+  # Codex with the Phoenix MCP server.
+  - name: codex-mcp
+    import_path: harbor.agents.installed.codex:Codex
+    model_name: openai/gpt-5.6
+    extra_allowed_hosts: [api.openai.com]
+    kwargs: {reasoning_effort: high, web_search: disabled}
+    mcp_servers:
+      - {name: phoenix, transport: streamable-http, url: "http://127.0.0.1:6006/mcp"}
+  # Codex with px on its PATH and the public phoenix-cli skill.
+  - name: codex-cli
+    import_path: harbor.agents.installed.codex:Codex
+    model_name: openai/gpt-5.6
+    extra_allowed_hosts: [api.openai.com]
+    kwargs: {reasoning_effort: high, web_search: disabled}
+    env:
+      PHOENIX_ENDPOINT: "http://127.0.0.1:6006"
+      NO_COLOR: "1"
+      PATH: "/opt/px/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    skills: [.agents/skills/phoenix-cli]
+  # PXI inside the Phoenix server, through the agent session chat route. Needs
+  # PHOENIX_DISABLE_AGENT_ASSISTANT=false in the host environment when the job starts
+  # (`make harbor-bench` sets it whenever pxi is among the agents); the server reads it
+  # once at start, so an env entry here would come too late.
+  - name: pxi
+    import_path: evals.harbor.agents.phoenix_chat_agent:PhoenixChatAgent
+    model_name: anthropic/claude-opus-5
+    extra_allowed_hosts: [api.anthropic.com]
+  # Reference solutions through the verifiers, no model calls, zero egress.
+  - name: oracle

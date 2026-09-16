@@ -4,25 +4,26 @@ Harbor tasks and tooling for evaluating agents against Phoenix. Harbor runs the 
 and the verifiers. The `arize-phoenix` Harbor plugin writes the results to a Phoenix of
 your choice as versioned datasets, experiments, scores, and ATIF traces.
 
-This directory contains two evaluation suites. The Phoenix tool benchmark compares
-coding agents that reach Phoenix through the MCP server or the `px` CLI. The
-`tasks/regression-triage` suite is the original multi-step Harbor task for Phoenix's
-in-app agent.
+This directory holds two suites. The [Phoenix tool benchmark](#phoenix-tool-benchmark)
+compares every surface an agent can use to reach Phoenix, on the same fixtures: the MCP
+server, the `px` CLI, and PXI itself. The [PXI tasks](#pxi-tasks) are multi-step
+scenarios for PXI and Claude Code on hand-prepared fixtures.
 
 ## Phoenix tool benchmark
 
-A trial starts two containers. One is a fresh Phoenix already seeded with the
+Every trial runs in one container built from `environment/Dockerfile`: a Phoenix from
+this checkout serving a database pre-seeded with the
 [PatronusAI/TRAIL](https://huggingface.co/datasets/PatronusAI/TRAIL) traces and
-annotations. The other holds Claude Code, Codex, and `px`. The agent answers a
-question or changes Phoenix state, and the task's verifier grades the result while
+annotations, Claude Code, Codex, `px`, and the verifier. The agent answers a question
+about the seeded project, and the task's verifier grades the agent's final reply while
 that Phoenix is still up. The plugin then records the trial in whichever Phoenix you
-point it at.
+point it at. The same image runs on local Docker and on Daytona.
 
 ```text
-conditions/           One Harbor job file per condition (agent x interface x versions)
-environment/          Dockerfiles, the shared compose file, and the seed script
+environment/          The shared Dockerfile; make harbor-stage adds the wheel, database, and lib
+experiments/          One Harbor job file per split, listing every condition
 lib/                  Grading helpers used by task verifiers (pure Python, unit-tested)
-scripts/              TRAIL download and image build
+scripts/              TRAIL download, seeding, staging, and job-file selection
 tasks/dev/<task>/     Development tasks: instruction, task.toml, tests/, solution/
 tasks/test/<task>/    Held-out tasks, same layout (empty until needed)
 ```
@@ -35,57 +36,126 @@ tasks/test/<task>/    Held-out tasks, same layout (empty until needed)
 - `uv`. The launcher gets its own Python 3.13 environment under `.venv/` here on first
   use, because Harbor needs Python 3.12 or newer and the repository runs on 3.10.
 - A Hugging Face token with the TRAIL terms accepted, for the one-time seed download.
-  TRAIL's terms forbid resharing it outside the Hugging Face hub. The download stays in
-  a local cache, and a seeded image must never be pushed to a registry.
+  TRAIL's terms forbid resharing it outside the Hugging Face hub. The rows stay in a
+  local cache, and the seeded database goes only into the task build contexts, never to
+  a registry or a bucket. On Daytona the built image lives in an auto-snapshot of your
+  Daytona organization; treat that like the local Docker image.
 - A running Phoenix to receive results. The plugin reads `PHOENIX_COLLECTOR_ENDPOINT`
   and `PHOENIX_API_KEY` and defaults to `http://localhost:6006`.
-- `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for the coding-agent conditions.
+- `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for the paid conditions, and `DAYTONA_API_KEY`
+  for `ENV=daytona`.
 
 ### First time
 
 ```sh
 HF_TOKEN=... make harbor-seed     # download TRAIL rows to evals/harbor/.cache
-make harbor-images                # build the Phoenix image and the two agent images, tagged :local
+make harbor-stage                 # build the wheel, seed the database, stage every task
 make harbor-bench-oracle          # run every reference solution through the verifiers
 ```
 
-`make harbor-images` builds the Phoenix image from this checkout, uncommitted changes
-included, and seeds it during the build. A throwaway server starts inside a Dockerfile
-stage, the repository's TRAIL loader pushes the rows through the public client, the
-build waits until the API reports every trace and its computed cost, and the database
-ships in the image. Rebuild that image whenever the server changes.
+`make harbor-stage` builds the Phoenix wheel from this checkout, uncommitted changes
+included. The first time, it also seeds the database: a throwaway image starts Phoenix,
+the repository's TRAIL loader pushes the rows through the public client, the script
+waits until the API reports every trace and its computed cost, checkpoints the SQLite
+write-ahead log, and the database is copied out. Later runs reuse the staged database;
+pass `RESEED=1` after a change that affects ingestion. `PX_VERSION` picks the `px`
+release the image installs (default `1.18.2`).
 
-Rebuild the agent images with `make harbor-images IMAGES=agent` whenever `lib/` or the
-pinned tool versions change. It takes seconds. Forgetting it is the most likely way to
-get a confusing verifier error, because the verifier imports `lib/` from the image, not
-from your checkout.
+Staging writes `wheels/`, `data/`, `lib/`, `container_assets/`, and `px-version` next
+to the Dockerfile, then copies the whole directory into each task's `environment/` with
+hard links, because Harbor builds a task's image from that task's own directory and
+Docker cannot follow symlinks out of a build context. Those copies are ignored by git and
+by the task's `.gitignore`, which Harbor also applies when it hashes the task, so staging
+never changes the dataset version. The dataset version covers the instruction, the
+verifier, and the reference solution; the image is the thing under test.
+
+Restage whenever the server, `lib/`, `container_assets/`, or a pinned tool version
+changes. Forgetting it is the most likely way to get a confusing verifier error, because
+the verifier imports `lib/` from the image, not from your checkout.
 
 ### Every run
 
 ```sh
-make harbor-bench CONDITION=claude-mcp                      # whole dev split, one attempt
-make harbor-bench CONDITION=codex-cli TASKS="count-traces total-cost" REPS=3
-make harbor-bench CONDITION=claude-cli SPLIT=test NAME=cli-1.18.2-candidate
+make harbor-bench AGENTS=claude-mcp                          # one condition, whole dev split
+make harbor-bench AGENTS="claude-cli codex-cli" TASKS="count-traces total-cost" REPS=3
+make harbor-bench                                            # every condition in experiments/dev.yaml
+make harbor-bench AGENTS=oracle ENV=daytona                  # same job on Daytona
+make harbor-bench AGENTS=claude-cli SPLIT=test NAME=cli-1.18.2-candidate
 ```
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `CONDITION` | file under `conditions/` without `.yaml` | `claude-mcp` |
+| `AGENTS` | condition names from `experiments/<split>.yaml`, space-separated | all of them |
 | `SPLIT` | task directory under `tasks/`; also names the Phoenix dataset `phoenix-tools-<split>` | `dev` |
 | `TASKS` | space-separated task names to include | all in the split |
 | `REPS` | attempts per task | `1` |
-| `NAME` | Phoenix experiment name and Harbor job name; a new name starts a new experiment | `<condition>-<timestamp>` |
+| `ENV` | Harbor environment: `docker` or `daytona` | `docker` |
+| `NAME` | Harbor job name and the experiment name prefix; a new name starts new experiments | `<split>-<timestamp>` |
 
-Each invocation is one Harbor job and one Phoenix experiment. To run several
-conditions, invoke the target several times. The target prints the underlying
-`harbor run` command, so you can also call `evals/harbor/.venv/bin/harbor` directly
-with any other Harbor flags.
+Each invocation is one Harbor job. The plugin creates one Phoenix experiment per
+condition, named `<NAME> · <condition>`, on the split's dataset. `harbor-bench` writes
+the selected conditions to a job file under `.cache/jobs/` and prints the underlying
+`harbor run` command, so you can also call `evals/harbor/.venv/bin/harbor` directly with
+any other Harbor flags. Harbor's own `-a` flag is not a way to pick a condition: it
+replaces the job's agents with a bare entry and drops the MCP servers, environment, and
+skills that define one.
+
+### Conditions
+
+`experiments/dev.yaml` lists every condition. Each is a stock Harbor agent under a
+condition name: Harbor keeps `name` as a label when it is not a registered agent name and
+`import_path` names the class.
+
+| Condition | Agent | Reaches Phoenix through |
+| --- | --- | --- |
+| `claude-mcp` | Claude Code | the MCP server at `http://127.0.0.1:6006/mcp` |
+| `claude-cli` | Claude Code | `px` on its `PATH`, `PHOENIX_ENDPOINT` set, and the public `phoenix-cli` skill |
+| `codex-mcp` | Codex | the MCP server |
+| `codex-cli` | Codex | `px`, `PHOENIX_ENDPOINT`, and the public skill |
+| `pxi` | PXI inside the Phoenix server | the agent session chat route, through `agents/phoenix_chat_agent.py` |
+| `oracle` | none | the reference solution, run through the verifier without model calls |
+
+`px` is installed in the image under `/opt/px/bin`, off the `PATH`, and only the `px`
+executable is exposed there, not `pxi`. CLI conditions add that directory to their
+`PATH` in their agent entry; MCP conditions never see it. The `pxi` condition needs the
+server started with PXI enabled, which the server decides once at start from
+`PHOENIX_DISABLE_AGENT_ASSISTANT` in the host environment: `make harbor-bench` sets it to
+`false` whenever `pxi` is among the selected conditions (or when running the whole file)
+and to `true` otherwise. A job that includes `pxi` therefore runs every condition with PXI
+enabled; the coding agents cannot reach it because `pxi` is not on their `PATH`.
+
+The web search and fetch tools are disabled for both coding agents. Every condition sees
+the same task instruction; there is no per-condition hint text.
+
+### Inside a trial
+
+Harbor starts the container with its own keepalive command and then runs the task's
+`[environment.healthcheck]`, which is `container_assets/start_phoenix_server.sh`. The
+script is idempotent: it starts Phoenix on `/data/phoenix.db` if nothing answers on port
+6006 and waits until it does. Running Phoenix from the healthcheck rather than the image
+entrypoint works the same on Docker and Daytona, and Harbor does not begin agent setup
+until it passes.
+
+Every task sets Harbor's allowlist network policy with no hosts of its own. Hosts are
+granted at the narrowest level that needs them (see [Network allowlists](#network-allowlists)):
+the job file grants the Phoenix docs hosts to every trial, and each condition grants its
+own LLM provider for its run phase. The oracle grants nothing. Because the agent and
+Phoenix share one container, the agent reaches Phoenix at `http://127.0.0.1:6006`. An
+MCP agent can still call Phoenix over plain HTTP on that port; the reward checks only the
+answer, not the interface used.
+
+Verification runs in Harbor's shared mode. After the agent finishes, Harbor uploads the
+agent's log directory, including the ATIF `trajectory.json` it wrote for the agent, and
+the task's `tests/` into the container, and runs `test.sh` there with Phoenix still up.
+The verifier reads the agent's final reply from `/logs/agent/trajectory.json`. The
+oracle runs a solution script instead of an agent and so has no trajectory; it writes
+`/workspace/answer.txt`, which the grader reads only when no trajectory exists.
 
 ### What lands in Phoenix
 
 - One dataset per split, versioned by the selected task content. Runs share a dataset
   version only when they use the same `SPLIT` and `TASKS` selection.
-- One experiment per run, named by `NAME`.
+- One experiment per condition and `NAME`.
 - On each run, Harbor's token counts, cost, and latency, an `infra_ok` evaluation that
   is `0` when Harbor recorded any exception, and the agent's ATIF trace.
 - From the verifier, `reward` (0 or 1), `tool_call_count`, and `agent_turn_count`. The
@@ -98,55 +168,36 @@ measurements. They do not change `reward`. The plugin also adds `infra_ok` as a 
 execution-health score; Phoenix records these values but does not combine or recalculate
 them.
 
-### Inside a trial
-
-`environment/docker-compose.yaml` adds a `phoenix` service beside Harbor's `main`
-service. Every task sets Harbor's allowlist network policy with only the LLM provider
-hosts allowed, so an agent cannot fetch documentation or read GitHub during a trial.
-Harbor enforces the policy by putting every service in one network namespace. That is
-why the agent reaches Phoenix at `http://127.0.0.1:6006` and the MCP server at
-`http://127.0.0.1:6006/mcp` rather than by service name, and why `PHOENIX_ENDPOINT`
-points `px` at localhost. The condition files disable web search and fetch tools. If a
-Docker runtime cannot run the allowlist, Harbor rejects the trial before it starts.
-
-There are two agent images. `phoenix-bench-agent` has no `px` at all, so MCP
-conditions cannot fall back to the CLI. `phoenix-bench-agent-cli` adds `px` under
-`/opt/px` and on `PATH`; CLI conditions and the oracle select it through the
-`conditions/images/cli.yaml` compose overlay. Setting `PATH` through the agent's `env`
-does not reach Codex's shells, so the image supplies the executable instead. An MCP
-agent can still call Phoenix over plain HTTP on the same port as the MCP server; the
-reward checks only the answer, not the interface used. The verifier venv lives under
-`/opt/verifier` in both images and is off `PATH`.
-
-Verification runs in Harbor's shared mode. After the agent finishes, Harbor copies the
-task's `tests/` to `/tests` in the agent container and runs `test.sh` there with Phoenix
-still up. A verifier can read `/workspace/answer.txt`, query Phoenix over HTTP, or
-both. The alternative, an offline verifier container, would lose access to the Phoenix
-the agent just changed, which is the whole point for state-changing tasks.
+To export PXI's own traces to a results Phoenix as well, set
+`HARBOR_PHOENIX_COLLECTOR_ENDPOINT` (and `HARBOR_PHOENIX_API_KEY`) in the host environment
+and grant the collector host to the trial, for example by adding it to
+`environment.extra_allowed_hosts` in the job file. From Docker the host is
+`host.docker.internal`, not `localhost`.
 
 ### Adding a task
 
 ```text
 tasks/dev/<name>/
-  instruction.md                 the prompt; end with the answer-file sentence for answer tasks
-  task.toml                      copy from an existing task (network policy, image, timeouts)
-  environment/docker-compose.yaml -> ../../../../environment/docker-compose.yaml (symlink)
+  instruction.md                 the prompt, nothing about where to put the answer
+  task.toml                      identical across tasks (network policy, healthcheck, timeouts)
+  .gitignore                     identical across tasks: ignores the staged environment/
   tests/test.sh                  the verifier entry point
   tests/expected.json            the reference, for answer tasks
   solution/solve.sh              a reference solution through px, run by the oracle
 ```
 
 Reference solutions in Python import `evals.harbor.lib.phoenix_query` from
-`/opt/verifier`, which fetches a project's spans through px. `task.toml`,
-`tests/test.sh`, and the compose symlink are identical across tasks; a unit test checks
-that they stay that way.
+`/opt/verifier`, which fetches a project's spans through `px`. `task.toml`,
+`.gitignore`, and `tests/test.sh` are identical across tasks; a unit test checks that
+they stay that way. Run `make harbor-stage` after adding a task so it gets its
+`environment/`.
 
 For a question with a checkable answer, `test.sh` calls the shared grader and
 `expected.json` defines the comparison. These are the supported forms:
 
 ```json
-{"kind": "integer", "value": 117}
-{"kind": "number", "value": 16.0022, "places": 2}
+{"kind": "integer", "value": 117, "aliases": ["traces"]}
+{"kind": "number", "value": 16.0022, "places": 2, "aliases": ["cost", "total"]}
 {"kind": "number", "value": [45.32, 43.05], "places": 1}
 {"kind": "labeled_number", "places": 1, "labels": {"short": {"aliases": ["short", "<15"], "value": 0.79}, "long": {"aliases": ["long", "40+"], "value": 14.61}}}
 {"kind": "entity_count", "aliases": ["FinderTool"], "value": 24}
@@ -161,17 +212,24 @@ remove Markdown emphasis and normalize whitespace before comparing. Integer, num
 and name checks reject phrases such as "117 or 118" and "about 117". Name checks can
 set `allow_hedging` to skip that rejection. `exact` ignores case and end punctuation.
 
-`labeled_number` and `entity_count` tie a value to the label or entity it belongs to:
-within each sentence that names the label, the nearest candidate number must be the
-expected one. Use them whenever an answer states more than one number, because a plain
+Replies are graded, not answer files, and a reply often says more than the answer.
+Give `integer` and `number` checks `aliases` naming what the value measures: a reply
+with a single number is compared directly, and a reply with several must put the
+expected value nearest one of those names, in a sentence that names it. That is what
+turns "I paged through 117 rows; the project has 118 traces" into a failure while
+"3,579 spans across 117 traces" still passes.
+
+`labeled_number` and `entity_count` tie a value to the label or entity it belongs to in
+the same way. Use them whenever an answer states more than one number, because a plain
 `number` or `integer` check would accept "Short: 14.6%; Long: 0.8%" or
 "FinderTool had 20 calls; SearchTool had 24".
 
 Keep a `source` field in `expected.json` that explains how the reference value was
 derived, plus `accept` and `reject` lists of example answers. The unit tests grade
 every example, so they document the check and catch regressions when the grader
-changes. Cover a paraphrase, a wrong value, a hedge, and, for multi-number answers, a
-reversed or mislabelled version.
+changes. Cover a paraphrase, a wrong value, a hedge, a long reply that states the value
+beside other numbers, a reply that mentions the value while answering something else,
+and, for multi-number answers, a reversed or mislabelled version.
 
 For a task that changes Phoenix state, write your own `test.sh`. The verifier venv has
 `phoenix.client`, so query Phoenix at `http://127.0.0.1:6006`, decide the reward, and
@@ -185,29 +243,15 @@ does not show that incorrect answers fail.
 
 ### Adding a condition
 
-A condition is a Harbor job file. Copy one from `conditions/`, change the agent,
-model, MCP servers, `env`, or `skills`, and commit it. To compare server or CLI
-versions, build a second image pair with `make harbor-images TAG=candidate` from the
-candidate checkout, then point a condition at those images with a compose overlay:
-
-```yaml
-environment:
-  extra_docker_compose:
-    - evals/harbor/conditions/images/candidate.yaml
-```
-
-```yaml
-# conditions/images/candidate.yaml
-services:
-  main: { image: phoenix-bench-agent-cli:candidate }   # or phoenix-bench-agent for an MCP condition
-  phoenix: { image: phoenix-bench-phoenix:candidate }
-```
-
-A condition can list several overlays. Later files win, so a CLI condition that
-compares versions lists `images/cli.yaml` first and its candidate overlay second.
+A condition is an agent entry in `experiments/dev.yaml` (and `test.yaml`). Copy one,
+change the agent class, model, MCP servers, `env`, or `skills`, and give it a new name.
+To compare `px` releases, stage with another `PX_VERSION` and run under a `NAME` that
+says so; to compare server versions, stage from the other checkout. Both change the
+image, not the dataset, so the experiments land side by side on the same dataset
+version.
 
 Skills go in the agent's `skills` list as directories that contain `SKILL.md`. Harbor
-installs them for both agents and records their digests in the job lock.
+installs them for Claude Code and Codex and records their digests in the job lock.
 
 ### Dev and test splits
 
@@ -226,7 +270,7 @@ uv run pytest tests/unit/harbor
 
 The oracle run is the integration test for tasks, verifiers, and the environment.
 
-## Phoenix headless agent task (regression-triage)
+## PXI tasks
 
 ### Run
 
@@ -264,7 +308,7 @@ Run all three on the error-analysis task in one Daytona job, one trial per agent
 make harbor-compare
 ```
 
-## Agents
+### Agents
 
 Three agents run against the same environment and verifiers, so reward differences are
 attributable to the surface:
@@ -382,7 +426,7 @@ The task runs under Harbor's allowlist network policy, so grant the collector's 
 the trial or the export is silently dropped: `HARBOR_ARGS='--allow-environment-host <host>'`
 for `harbor-compare`, or the same flag on a direct `harbor run`.
 
-## Network allowlists
+### Network allowlists
 
 The task allows nothing by itself; every host is granted at the narrowest level that
 needs it, so `task.toml` (and with it the Phoenix dataset version) never changes for a
@@ -400,7 +444,7 @@ new provider or operator.
 `jobs/error-analysis.yaml`. Agent-level hosts are not in effect during agent install, so
 anything an agent installs at that point must already be in the image or in the upload.
 
-## Fixtures
+### Fixtures
 
 The error-analysis fixture is hand-prepared. To replace it, upload the new database and
 restage:

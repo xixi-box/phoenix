@@ -103,6 +103,9 @@ helm/charts/*.tgz
 /evals/harbor/**/*.whl
 /evals/harbor/tasks/**/environment/container_assets/
 /evals/harbor/tasks/**/environment/data/
+# The tool benchmark stages its whole environment/ into each task (see the task .gitignore)
+/evals/harbor/tasks/dev/*/environment/
+/evals/harbor/tasks/test/*/environment/
 
 # WebAssembly binaries
 **/wasm/*.wasm

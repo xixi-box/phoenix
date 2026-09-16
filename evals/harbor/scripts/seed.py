@@ -1,13 +1,14 @@
-"""Load the TRAIL rows into a throwaway Phoenix during the image build.
+"""Load the TRAIL rows into a throwaway Phoenix and leave a complete database behind.
 
-Runs inside the ``seeded`` stage of phoenix.Dockerfile. Starts the server on
-/data, loads the rows through the repository's TRAIL loader (public client
-API only), waits until the public API reports every trace and computed
-costs, then stops the server so /data holds a complete database.
+Runs inside scripts/seed.Dockerfile. Starts the server on /data, loads the rows
+through the repository's TRAIL loader (public client API only), waits until the
+public API reports every trace and computed costs, stops the server, and
+checkpoints the write-ahead log so /data/phoenix.db is the whole database.
 """
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -18,6 +19,7 @@ from typing import Any, Callable
 SEED = Path("/seed")
 ROWS = SEED / "trail-gaia.json"
 LOADER = SEED / "load_patronus_trail.py"
+DATABASE = Path("/data/phoenix.db")
 BASE = "http://127.0.0.1:6006"
 
 
@@ -108,6 +110,10 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             server.kill()
         log.close()
+    with sqlite3.connect(DATABASE) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    for sidecar in (DATABASE.with_suffix(".db-wal"), DATABASE.with_suffix(".db-shm")):
+        sidecar.unlink(missing_ok=True)
     (SEED / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary))
 

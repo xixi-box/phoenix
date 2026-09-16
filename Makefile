@@ -40,7 +40,7 @@ NC := \033[0m # No Color
 	mcp-skills codegen-prompts sync-models schema-ddl check-graphql-permissions check-filter-dsl-snippets check-skill-graphql-examples gen-otel-models \
 	gh-comment-watch \
 	harbor-stage-environments harbor-plugin-e2e harbor-oracle harbor-run harbor-compare harbor-view \
-	harbor-seed harbor-images harbor-bench harbor-bench-oracle \
+	harbor-seed harbor-stage harbor-bench harbor-bench-oracle \
 	clean clean-all
 
 help: ## Show this help message
@@ -116,9 +116,9 @@ help: ## Show this help message
 	@echo -e "  $(YELLOW)harbor-compare$(NC)           - Run every agent on the error-analysis task in one Daytona job"
 	@echo -e "  harbor-view               - Browse Harbor job results in a local web viewer"
 	@echo -e "  harbor-seed               - Download the TRAIL rows for the tool benchmark seed (needs HF_TOKEN)"
-	@echo -e "  harbor-images             - Build the tool benchmark images from this checkout (TAG=..., IMAGES=all|phoenix|agent)"
-	@echo -e "  $(YELLOW)harbor-bench$(NC)             - Run one benchmark condition (CONDITION=..., SPLIT=..., TASKS=..., REPS=..., NAME=...)"
-	@echo -e "  harbor-bench-oracle       - Run the reference solutions through the verifiers (SPLIT=..., TASKS=...)"
+	@echo -e "  harbor-stage              - Stage the tool benchmark image inputs into every task (PX_VERSION=..., RESEED=1)"
+	@echo -e "  $(YELLOW)harbor-bench$(NC)             - Run benchmark conditions (AGENTS=..., SPLIT=..., TASKS=..., REPS=..., NAME=..., ENV=...)"
+	@echo -e "  harbor-bench-oracle       - Run the reference solutions through the verifiers (SPLIT=..., TASKS=..., ENV=...)"
 	@echo -e ""
 	@echo -e "$(GREEN)Build:$(NC)"
 	@echo -e "  $(YELLOW)build$(NC)                 - Build everything (Python + TypeScript workspace)"
@@ -595,20 +595,32 @@ harbor-view: ## Browse Harbor job results in a local web viewer
 	$(HARBOR) view jobs
 
 #-----------------------------------------------------------------------------
-# Phoenix tool benchmark (evals/harbor): MCP and CLI under Harbor
+# Phoenix tool benchmark (evals/harbor): MCP, CLI, and PXI under Harbor
 #-----------------------------------------------------------------------------
 BENCH_DIR := evals/harbor
 BENCH_VENV := $(BENCH_DIR)/.venv/bin
 BENCH_TRAIL := $(BENCH_DIR)/.cache/trail-gaia.json
-CONDITION ?= claude-mcp
+# Conditions to run, by name from experiments/<SPLIT>.yaml; empty runs every one.
+AGENTS ?=
 SPLIT ?= dev
 TASKS ?=
 REPS ?= 1
-NAME ?= $(CONDITION)-$(shell date -u +%Y%m%dT%H%M%SZ)
-BENCH_RUN = $(BENCH_VENV)/harbor run --config $(BENCH_DIR)/conditions/$(1).yaml \
-	--path $(BENCH_DIR)/tasks/$(SPLIT) $(foreach t,$(TASKS),--include-task-name $(t)) \
-	--plugin arize-phoenix --plugin-kwarg dataset=phoenix-tools-$(SPLIT) \
-	--plugin-kwarg experiment_name=$(2) --job-name $(2) --n-attempts $(REPS) --yes
+ENV ?= docker
+NAME ?= $(SPLIT)-$(shell date -u +%Y%m%dT%H%M%SZ)
+BENCH_ENV_KWARGS := $(if $(filter daytona,$(ENV)),--ek auto_stop_interval_mins=30 --ek auto_delete_interval_mins=30,)
+# The server reads PHOENIX_DISABLE_AGENT_ASSISTANT once at start, so PXI is switched on
+# for the whole job whenever the pxi condition is part of it (or the whole file runs).
+# The other conditions cannot reach it: only px, not pxi, is on the CLI conditions' PATH.
+# $(1): agents, empty for every one in the file.
+BENCH_PXI = $(if $(1),$(if $(filter pxi,$(1)),false,true),false)
+# $(1): agents, $(2): job and experiment name.
+BENCH_RUN = $(BENCH_VENV)/python $(BENCH_DIR)/scripts/job_config.py $(BENCH_DIR)/experiments/$(SPLIT).yaml \
+		--out $(BENCH_DIR)/.cache/jobs/$(2).yaml --agents $(1) --tasks $(TASKS) && \
+	PYTHONPATH=. PHOENIX_DISABLE_AGENT_ASSISTANT=$(call BENCH_PXI,$(1)) $(BENCH_VENV)/harbor run \
+		--config $(BENCH_DIR)/.cache/jobs/$(2).yaml -e $(ENV) $(BENCH_ENV_KWARGS) \
+		--plugin arize-phoenix --plugin-kwarg dataset=phoenix-tools-$(SPLIT) \
+		--plugin-kwarg 'experiment_name_template=$(2) · {agent.name}' \
+		--job-name $(2) --n-attempts $(REPS) --yes
 
 $(BENCH_VENV)/harbor: $(BENCH_DIR)/pyproject.toml $(BENCH_DIR)/uv.lock
 	uv sync --project $(BENCH_DIR) --python 3.13
@@ -617,14 +629,14 @@ harbor-seed: $(BENCH_VENV)/harbor ## Download the TRAIL rows for the tool benchm
 	@test -f $(BENCH_TRAIL) && echo "TRAIL rows already cached at $(BENCH_TRAIL)" || \
 		$(BENCH_VENV)/python $(BENCH_DIR)/scripts/download_trail.py --output $(BENCH_TRAIL)
 
-harbor-images: ## Build the tool benchmark images from this checkout (TAG=..., IMAGES=all|phoenix|agent)
-	./$(BENCH_DIR)/scripts/build_images.sh
+harbor-stage: ## Stage the tool benchmark image inputs into every task (PX_VERSION=..., RESEED=1)
+	./$(BENCH_DIR)/scripts/stage.sh
 
-harbor-bench: $(BENCH_VENV)/harbor ## Run one benchmark condition (CONDITION=..., SPLIT=..., TASKS=..., REPS=..., NAME=...)
-	@echo -e "$(CYAN)Running condition $(CONDITION) on $(SPLIT) as $(NAME)...$(NC)"
-	$(call BENCH_RUN,$(CONDITION),$(NAME))
+harbor-bench: $(BENCH_VENV)/harbor ## Run benchmark conditions (AGENTS=..., SPLIT=..., TASKS=..., REPS=..., NAME=..., ENV=docker|daytona)
+	@echo -e "$(CYAN)Running $(if $(AGENTS),$(AGENTS),every condition) on $(SPLIT) as $(NAME) ($(ENV))...$(NC)"
+	$(call BENCH_RUN,$(AGENTS),$(NAME))
 
-harbor-bench-oracle: $(BENCH_VENV)/harbor ## Run the reference solutions through the verifiers (SPLIT=..., TASKS=...)
+harbor-bench-oracle: $(BENCH_VENV)/harbor ## Run the reference solutions through the verifiers (SPLIT=..., TASKS=..., ENV=...)
 	$(call BENCH_RUN,oracle,oracle-$(shell date -u +%Y%m%dT%H%M%SZ))
 
 #=============================================================================

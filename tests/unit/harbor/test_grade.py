@@ -36,14 +36,27 @@ def test_grade_answer_supports_required_lists_and_composites() -> None:
     assert not grade.grade_answer("117", {"kind": "integer", "value": None})
 
 
-def test_main_writes_reward_with_measurements(tmp_path: Path) -> None:
+def test_main_grades_the_trajectory_reply_with_measurements(tmp_path: Path) -> None:
     answer = tmp_path / "answer.txt"
-    answer.write_text("There are 117 traces.\n")
+    answer.write_text("118\n")  # a stale file must not win over the agent's reply
     expected = tmp_path / "expected.json"
     expected.write_text(json.dumps({"kind": "integer", "value": 117}))
     trajectory = tmp_path / "trajectory.json"
     trajectory.write_text(
-        json.dumps({"steps": [{"source": "agent", "llm_call_count": 1, "tool_calls": [{}]}]})
+        json.dumps(
+            {
+                "steps": [
+                    {"source": "user", "message": "How many traces?"},
+                    {
+                        "source": "agent",
+                        "llm_call_count": 1,
+                        "tool_calls": [{}],
+                        "message": "Checking.",
+                    },
+                    {"source": "agent", "llm_call_count": 1, "message": "There are 117 traces."},
+                ]
+            }
+        )
     )
     reward = tmp_path / "verifier" / "reward.json"
     grade.main(
@@ -61,6 +74,26 @@ def test_main_writes_reward_with_measurements(tmp_path: Path) -> None:
     assert json.loads(reward.read_text()) == {
         "reward": 1.0,
         "tool_call_count": 1.0,
+        "agent_turn_count": 2.0,
+    }
+
+
+def test_main_reads_the_answer_file_only_without_a_trajectory(tmp_path: Path) -> None:
+    """The oracle runs a solution script, which has no trajectory and writes a file."""
+    answer = tmp_path / "answer.txt"
+    answer.write_text("117\n")
+    expected = tmp_path / "expected.json"
+    expected.write_text(json.dumps({"kind": "integer", "value": 117}))
+    reward = tmp_path / "reward.json"
+    args = ["--expected", str(expected), "--answer", str(answer), "--reward-file", str(reward)]
+    grade.main([*args, "--trajectory", str(tmp_path / "none.json")])
+    assert json.loads(reward.read_text()) == {"reward": 1.0}
+    trajectory = tmp_path / "trajectory.json"
+    trajectory.write_text(json.dumps({"steps": [{"source": "agent", "message": ""}]}))
+    grade.main([*args, "--trajectory", str(trajectory)])
+    assert json.loads(reward.read_text()) == {
+        "reward": 0.0,
+        "tool_call_count": 0.0,
         "agent_turn_count": 1.0,
     }
 

@@ -32,7 +32,8 @@
     "Short: 0.8%; Long: 14.6%",
     "Yes. Short traces (<15 spans) had a 0.79% error rate, compared with 14.61% for long traces (>=40 spans).",
     "Under 15 spans: 0.8%.\nAt least 40 spans: 14.6%.",
-    "14.6% for longer runs and 0.8% for shorter ones, so yes."
+    "14.6% for longer runs and 0.8% for shorter ones, so yes.",
+    "Long traces have a 14.6% error rate. Short traces have 5 errors out of 629 spans, which is 0.8%."
   ],
   "reject": [
     "Short: 14.6%; Long: 0.8%",

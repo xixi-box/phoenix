@@ -16,6 +16,32 @@ def test_integer_rejects_wrong_or_hedged_values(text: str) -> None:
     assert not answers.match_integer(text, 117)
 
 
+def test_integer_with_aliases_reads_the_value_beside_its_name() -> None:
+    aliases = ["traces"]
+    assert answers.match_integer("117", 117, aliases)
+    assert answers.match_integer("3,579 spans across 117 traces.", 117, aliases)
+    assert answers.match_integer("117 traces.\n\nI paged 500 spans at a time.", 117, aliases)
+    assert not answers.match_integer(
+        "117 rows on page one; the project has 118 traces.", 117, aliases
+    )
+    assert not answers.match_integer("118 traces (117 of them with spans).", 117, aliases)
+    assert not answers.match_integer("3,579 spans; the longest trace has 117 spans.", 117, aliases)
+
+
+def test_number_with_aliases_reads_the_value_beside_its_name() -> None:
+    aliases = ["cost", "total"]
+    assert answers.match_number("$16.00", 16.0022, places=2, aliases=aliases)
+    assert answers.match_number(
+        "117 traces cost $16.00 in total.", 16.0022, places=2, aliases=aliases
+    )
+    assert not answers.match_number(
+        "The top trace cost $2.10; the total was $16.10.", 16.0022, places=2, aliases=aliases
+    )
+    assert not answers.match_number(
+        "$16.00 for trail-gaia; this run cost $16.10.", 16.0, 2, aliases
+    )
+
+
 def test_number_rounds_both_sides() -> None:
     assert answers.match_number("$0.42", 0.4213, places=2)
     assert answers.match_number("0.4213 USD", 0.42, places=2)

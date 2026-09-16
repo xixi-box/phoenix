@@ -1,12 +1,39 @@
+# Shared by every benchmark task; a unit test keeps the copies identical. Nothing
+# operator-specific belongs here: Harbor hashes this file into the task digest, which
+# the Phoenix plugin uses as the dataset version.
+
 [environment]
-docker_image = "phoenix-bench-agent:local"
-network_mode = "allowlist"
-allowed_hosts = ["api.anthropic.com", "api.openai.com"]
+os = "linux"
 cpus = 2
 memory_mb = 4096
+build_timeout_sec = 1200.0
+# The task allows nothing from outside. The job file grants the docs hosts to the whole
+# trial and each agent entry grants its own LLM provider for its run phase.
+network_mode = "allowlist"
+
+[environment.env]
+ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY:-}"
+OPENAI_API_KEY = "${OPENAI_API_KEY:-}"
+# PXI stays off unless the run includes the pxi condition; the server reads this once
+# at start, so it comes from the host environment rather than from an agent entry.
+PHOENIX_DISABLE_AGENT_ASSISTANT = "${PHOENIX_DISABLE_AGENT_ASSISTANT:-true}"
+HARBOR_PHOENIX_COLLECTOR_ENDPOINT = "${HARBOR_PHOENIX_COLLECTOR_ENDPOINT:-}"
+HARBOR_PHOENIX_API_KEY = "${HARBOR_PHOENIX_API_KEY:-}"
+HARBOR_PHOENIX_PROJECT_NAME = "${HARBOR_PHOENIX_PROJECT_NAME:-}"
+
+# Harbor runs this inside the container after it starts and before agent setup, on every
+# backend. The script is idempotent: it starts Phoenix on the fixture database if it is
+# not already serving and waits for it to answer.
+[environment.healthcheck]
+command = "sh /opt/phoenix-eval/start_phoenix_server.sh"
+timeout_sec = 180.0
+retries = 2
+
+[solution.env]
+PHOENIX_ENDPOINT = "http://127.0.0.1:6006"
 
 [agent]
-timeout_sec = 600
+timeout_sec = 600.0
 
 [verifier]
-timeout_sec = 120
+timeout_sec = 120.0

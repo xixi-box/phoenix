@@ -1,14 +1,21 @@
-"""Grade an answer file and write Harbor's ``reward.json``.
+"""Grade the agent's reply and write Harbor's ``reward.json``.
 
 Usage inside a task verifier::
 
     PYTHONPATH=/opt/verifier /opt/verifier/bin/python -m evals.harbor.lib.grade \
         --expected /tests/expected.json
 
+The reply is the last agent message in Harbor's ATIF trajectory at
+``/logs/agent/trajectory.json``. The oracle runs a solution script instead of an
+agent and so has no trajectory; it writes its answer to ``/workspace/answer.txt``,
+which is read only when no trajectory exists.
+
 Expected specs support ``integer``, ``number``, ``name``, ``labeled_number``,
 ``entity_count``, normalized ``exact``, and recursive ``all`` checks; the README
 lists their fields. A value list accepts any entry unless ``require_all`` is set.
-State verifiers can call :func:`write_reward` directly.
+``integer`` and ``number`` take optional ``aliases`` naming what the value
+measures; a reply with several numbers must then state the value beside one of
+those names. State verifiers can call :func:`write_reward` directly.
 """
 
 from __future__ import annotations
@@ -34,12 +41,15 @@ def grade_answer(text: str, expected: dict[str, Any]) -> bool:
         return bool(expected["checks"]) and all(
             grade_answer(text, check) for check in expected["checks"]
         )
+    aliases = expected.get("aliases") or []
     if kind == "integer":
-        return bool(values) and combine(answers.match_integer(text, int(value)) for value in values)
+        return bool(values) and combine(
+            answers.match_integer(text, int(value), aliases=aliases) for value in values
+        )
     if kind == "number":
         places = int(expected.get("places", 2))
         return bool(values) and combine(
-            answers.match_number(text, value, places) for value in values
+            answers.match_number(text, value, places, aliases=aliases) for value in values
         )
     if kind == "name":
         return answers.match_name(
@@ -77,6 +87,17 @@ def write_reward(
     return scores
 
 
+def read_reply(trajectory_path: Path, answer_path: Path) -> tuple[str, str]:
+    """The reply to grade and where it came from: ``trajectory`` or ``answer_file``."""
+    trajectory = atif.read_trajectory(trajectory_path)
+    if trajectory is not None:
+        return atif.read_reply(trajectory), "trajectory"
+    try:
+        return answer_path.read_text(), "answer_file"
+    except OSError:
+        return "", "answer_file"
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -87,15 +108,21 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--reward-file", type=Path, default=REWARD_PATH)
     args = parser.parse_args(argv)
     expected = json.loads(args.expected.read_text())
-    try:
-        text = args.answer.read_text()
-    except OSError:
-        text = ""
+    text, source = read_reply(args.trajectory, args.answer)
     passed = grade_answer(text, expected)
     scores = write_reward(
         float(passed), trajectory_path=args.trajectory, reward_path=args.reward_file
     )
-    print(json.dumps({"answer": answers.plain(text)[:500], "expected": expected, "scores": scores}))
+    print(
+        json.dumps(
+            {
+                "answer": answers.plain(text)[:500],
+                "answer_source": source,
+                "expected": expected,
+                "scores": scores,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

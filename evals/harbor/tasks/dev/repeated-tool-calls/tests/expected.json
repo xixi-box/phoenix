@@ -16,6 +16,7 @@
     "SearchInformationTool: 24 calls",
     "FinderTool: 23 calls",
     "FinderTool: 24 or 25 calls",
-    "24"
+    "24",
+    "FinderTool appears in 117 traces; the tool called most within one trace is SearchInformationTool, 24 times."
   ]
 }

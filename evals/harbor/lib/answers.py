@@ -1,7 +1,10 @@
 """Compare a plain-text answer with an expected value.
 
-These matchers grade the text an agent wrote to its answer file. An answer
-passes when it states the expected value without hedging between candidates.
+These matchers grade the agent's final reply. An answer passes when it states
+the expected value without hedging between candidates. Replies are often longer
+than the answer: an integer or number check can name what its value measures
+(``aliases``), and a reply that contains several numbers must then put the
+expected one nearest that name in a sentence that names it.
 """
 
 from __future__ import annotations
@@ -40,18 +43,42 @@ def numbers(text: str) -> list[Decimal]:
     return [Decimal(match.replace(",", "")) for match in _NUMBER.findall(text)]
 
 
-def match_integer(answer: object, expected: int) -> bool:
+def match_integer(answer: object, expected: int, aliases: Sequence[str] = ()) -> bool:
+    """The answer states the integer; with several numbers, beside one of ``aliases``."""
     text = plain(answer)
-    return not hedged(text) and expected in integers(text)
+    if hedged(text) or expected not in integers(text):
+        return False
+    if not aliases or len(numbers(text)) == 1:
+        return True
+    return match_entity_count(text, aliases, expected)
 
 
-def match_number(answer: object, expected: float | int | str, places: int) -> bool:
+def match_number(
+    answer: object, expected: float | int | str, places: int, aliases: Sequence[str] = ()
+) -> bool:
+    """The answer states the number to ``places``; with several, beside one of ``aliases``."""
     text = plain(answer)
     if hedged(text):
         return False
     quantum = Decimal(10) ** -places
     target = Decimal(str(expected)).quantize(quantum, rounding=ROUND_HALF_UP)
-    return any(value.quantize(quantum, rounding=ROUND_HALF_UP) == target for value in numbers(text))
+    found = [value.quantize(quantum, rounding=ROUND_HALF_UP) for value in numbers(text)]
+    if target not in found:
+        return False
+    if not aliases or len(found) == 1:
+        return True
+
+    def all_numbers(sentence: str) -> list[tuple[int, int, str]]:
+        return [
+            (
+                match.start(),
+                match.end(),
+                str(Decimal(match.group().replace(",", "")).quantize(quantum, ROUND_HALF_UP)),
+            )
+            for match in _NUMBER.finditer(sentence)
+        ]
+
+    return str(target) in _claims(text, aliases, all_numbers)
 
 
 _SENTENCE = re.compile(r"(?<=[.;!])\s+|\n+")
